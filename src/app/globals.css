@@ -108,6 +108,24 @@ body {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
     mix-blend-mode: overlay;
   }
+
+  /* Iluminação ambiente dourada — radial gradients suaves atrás de todo o conteúdo.
+     mix-blend-mode: screen faz o tom ler como luz difusa, não como mancha de cor. */
+  .ambient-glow {
+    background-image:
+      radial-gradient(42% 42% at 84% 10%, rgba(222, 178, 96, 0.18) 0%, rgba(214, 173, 96, 0.07) 38%, transparent 68%),
+      radial-gradient(34% 34% at 10% 90%, rgba(241, 221, 174, 0.12) 0%, rgba(214, 173, 96, 0.05) 42%, transparent 70%),
+      radial-gradient(52% 42% at 50% 48%, rgba(214, 173, 96, 0.05) 0%, transparent 60%);
+    mix-blend-mode: screen;
+  }
+
+  @media (max-width: 640px) {
+    .ambient-glow {
+      background-image:
+        radial-gradient(58% 40% at 88% 6%, rgba(222, 178, 96, 0.12) 0%, transparent 68%),
+        radial-gradient(50% 36% at 8% 94%, rgba(241, 221, 174, 0.08) 0%, transparent 72%);
+    }
+  }
 }
 
 ::selection {
