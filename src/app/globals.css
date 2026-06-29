@@ -113,17 +113,17 @@ body {
      mix-blend-mode: screen faz o tom ler como luz difusa, não como mancha de cor. */
   .ambient-glow {
     background-image:
-      radial-gradient(42% 42% at 84% 10%, rgba(222, 178, 96, 0.18) 0%, rgba(214, 173, 96, 0.07) 38%, transparent 68%),
-      radial-gradient(34% 34% at 10% 90%, rgba(241, 221, 174, 0.12) 0%, rgba(214, 173, 96, 0.05) 42%, transparent 70%),
-      radial-gradient(52% 42% at 50% 48%, rgba(214, 173, 96, 0.05) 0%, transparent 60%);
+      radial-gradient(50% 50% at 85% 8%, rgba(230, 184, 96, 0.34) 0%, rgba(214, 173, 96, 0.13) 40%, transparent 72%),
+      radial-gradient(44% 44% at 8% 92%, rgba(241, 221, 174, 0.22) 0%, rgba(214, 173, 96, 0.08) 45%, transparent 74%),
+      radial-gradient(62% 50% at 50% 46%, rgba(214, 173, 96, 0.08) 0%, transparent 62%);
     mix-blend-mode: screen;
   }
 
   @media (max-width: 640px) {
     .ambient-glow {
       background-image:
-        radial-gradient(58% 40% at 88% 6%, rgba(222, 178, 96, 0.12) 0%, transparent 68%),
-        radial-gradient(50% 36% at 8% 94%, rgba(241, 221, 174, 0.08) 0%, transparent 72%);
+        radial-gradient(62% 42% at 88% 6%, rgba(230, 184, 96, 0.24) 0%, transparent 70%),
+        radial-gradient(54% 40% at 8% 94%, rgba(241, 221, 174, 0.15) 0%, transparent 74%);
     }
   }
 }
