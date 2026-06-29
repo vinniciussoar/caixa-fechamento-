@@ -95,6 +95,7 @@ export function AnimatedBackground() {
       </motion.div>
       <div className="absolute inset-0 noise-overlay opacity-[0.05]" />
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-ink/40 to-ink" />
+      <div className="ambient-glow absolute inset-0" />
     </div>
   );
 }
