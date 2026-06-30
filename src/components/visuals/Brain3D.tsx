@@ -1,251 +1,245 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef } from "react";
+/* eslint-disable react-hooks/refs --
+   React Three Fiber is imperative by design: geometries/materials held in
+   refs are mutated every frame inside useFrame and read when building the
+   scene graph. This React Compiler rule doesn't model that WebGL pattern. */
+
+import { Suspense, useEffect, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Float, Line, Sparkles } from "@react-three/drei";
-import { SimplexNoise } from "three/addons/math/SimplexNoise.js";
+import { Sparkles } from "@react-three/drei";
 import type { MotionValue } from "framer-motion";
 import * as THREE from "three";
 
-const RIDGE_COLOR = new THREE.Color("#0d1d3a");
-const GROOVE_COLOR = new THREE.Color("#caa257");
-const GLOW_COLOR = new THREE.Color("#ffe9b8");
-const BLACK_COLOR = new THREE.Color("#000000");
+const GOLD = new THREE.Color("#e6c069");
+const GOLD_LIGHT = new THREE.Color("#f6e3b0");
+const SERENITY = new THREE.Color("#a9d6f5");
 
-function buildBrainGeometry() {
-  const geometry = new THREE.IcosahedronGeometry(1, 4);
-  const simplex = new SimplexNoise();
-  const position = geometry.attributes.position;
-  const count = position.count;
+const NODE_COUNT = 220;
+const NEIGHBORS = 2;
+const PULSE_COUNT = 14;
+const SHAPE = new THREE.Vector3(1.18, 0.98, 1.18);
+const BASE_RADIUS = 1.62;
 
-  const solidColors = new Float32Array(count * 3);
-  const glowColors = new Float32Array(count * 3);
+type Route = { a: number; b: number; phase: number; speed: number };
 
-  const dir = new THREE.Vector3();
-  const shaped = new THREE.Vector3();
-  const color = new THREE.Color();
+function makeDiscTexture() {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(0.35, "rgba(255,240,210,0.85)");
+  gradient.addColorStop(1, "rgba(255,240,210,0)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
 
-  for (let i = 0; i < count; i++) {
-    dir.fromBufferAttribute(position, i).normalize();
+function buildNetwork() {
+  const nodes: THREE.Vector3[] = [];
+  const phi = Math.PI * (3 - Math.sqrt(5));
 
-    const folds =
-      simplex.noise3d(dir.x * 2.6, dir.y * 2.6, dir.z * 2.6) * 0.085 +
-      simplex.noise3d(dir.x * 6, dir.y * 6, dir.z * 6) * 0.04 +
-      simplex.noise3d(dir.x * 13, dir.y * 13, dir.z * 13) * 0.018;
-
-    const topness = Math.max(dir.y, 0);
-    const fissure = Math.exp(-((dir.x * 6.5) ** 2)) * topness * 0.2;
-
-    const temporalBulge =
-      Math.max(0, -dir.y * 0.6) *
-      Math.exp(-(((Math.abs(dir.x) - 0.55) * 5) ** 2)) *
-      0.05;
-
-    const displacement = folds - fissure + temporalBulge;
-
-    shaped.set(dir.x * 1.02, dir.y * 0.82, dir.z * 1.2);
-    const radius = 1.32 * (1 + displacement);
-    shaped.multiplyScalar(radius);
-
-    position.setXYZ(i, shaped.x, shaped.y, shaped.z);
-
-    const depth = THREE.MathUtils.clamp((displacement + 0.16) / 0.32, 0, 1);
-
-    color.copy(RIDGE_COLOR).lerp(GROOVE_COLOR, depth);
-    solidColors[i * 3] = color.r;
-    solidColors[i * 3 + 1] = color.g;
-    solidColors[i * 3 + 2] = color.b;
-
-    const glowAmount = depth ** 3.2;
-    color.copy(BLACK_COLOR).lerp(GLOW_COLOR, glowAmount);
-    glowColors[i * 3] = color.r;
-    glowColors[i * 3 + 1] = color.g;
-    glowColors[i * 3 + 2] = color.b;
+  for (let i = 0; i < NODE_COUNT; i++) {
+    const y = 1 - (i / (NODE_COUNT - 1)) * 2;
+    const ring = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = phi * i;
+    const jitter = 0.9 + Math.random() * 0.18;
+    const v = new THREE.Vector3(
+      Math.cos(theta) * ring,
+      y,
+      Math.sin(theta) * ring
+    )
+      .multiply(SHAPE)
+      .multiplyScalar(BASE_RADIUS * jitter);
+    nodes.push(v);
   }
 
-  position.needsUpdate = true;
-  geometry.setAttribute("color", new THREE.BufferAttribute(solidColors, 3));
-  geometry.computeVertexNormals();
-
-  const glowGeometry = geometry.clone();
-  glowGeometry.setAttribute("color", new THREE.BufferAttribute(glowColors, 3));
-
-  return { geometry, glowGeometry };
-}
-
-const NODES: [number, number, number][] = [
-  [0.78, 0.78, 0.85],
-  [-0.82, 0.7, 0.78],
-  [0, 1.08, 0.65],
-  [0.92, -0.35, 0.92],
-  [-0.92, -0.28, 0.92],
-];
-
-const EDGES: [number, number][] = [
-  [0, 2],
-  [2, 1],
-  [0, 3],
-  [1, 4],
-  [3, 4],
-  [0, 1],
-];
-
-function SynapseNetwork() {
-  const dotsRef = useRef<(THREE.Mesh | null)[]>([]);
-  const halosRef = useRef<(THREE.Mesh | null)[]>([]);
-
-  useFrame((state) => {
-    const t = state.clock.elapsedTime;
-    EDGES.forEach(([a, b], i) => {
-      const speed = 0.32 + (i % 3) * 0.07;
-      const phase = i * 0.6;
-      const raw = (t * speed + phase) % 2;
-      const tt = raw > 1 ? 2 - raw : raw;
-
-      const pa = NODES[a];
-      const pb = NODES[b];
-      const x = pa[0] + (pb[0] - pa[0]) * tt;
-      const y = pa[1] + (pb[1] - pa[1]) * tt;
-      const z = pa[2] + (pb[2] - pa[2]) * tt;
-
-      dotsRef.current[i]?.position.set(x, y, z);
-      halosRef.current[i]?.position.set(x, y, z);
-    });
+  // Node positions + colors
+  const nodePositions = new Float32Array(NODE_COUNT * 3);
+  const nodeColors = new Float32Array(NODE_COUNT * 3);
+  const color = new THREE.Color();
+  nodes.forEach((v, i) => {
+    nodePositions[i * 3] = v.x;
+    nodePositions[i * 3 + 1] = v.y;
+    nodePositions[i * 3 + 2] = v.z;
+    const t = (v.y / (BASE_RADIUS * SHAPE.y) + 1) / 2;
+    color.copy(SERENITY).lerp(GOLD, THREE.MathUtils.clamp(t * 0.85 + 0.15, 0, 1));
+    if (Math.random() > 0.78) color.lerp(GOLD_LIGHT, 0.6);
+    nodeColors[i * 3] = color.r;
+    nodeColors[i * 3 + 1] = color.g;
+    nodeColors[i * 3 + 2] = color.b;
   });
 
-  return (
-    <group>
-      {EDGES.map(([a, b], i) => (
-        <Line
-          key={`line-${i}`}
-          points={[NODES[a], NODES[b]]}
-          color="#f6d9a0"
-          transparent
-          opacity={0.22}
-          lineWidth={1}
-        />
-      ))}
+  // Edges: connect nearest neighbors
+  const edgeSet = new Set<string>();
+  const edges: [number, number][] = [];
+  for (let i = 0; i < NODE_COUNT; i++) {
+    const dists: [number, number][] = [];
+    for (let j = 0; j < NODE_COUNT; j++) {
+      if (i === j) continue;
+      dists.push([j, nodes[i].distanceToSquared(nodes[j])]);
+    }
+    dists.sort((a, b) => a[1] - b[1]);
+    for (let n = 0; n < NEIGHBORS; n++) {
+      const j = dists[n][0];
+      const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+      if (edgeSet.has(key)) continue;
+      edgeSet.add(key);
+      edges.push([i, j]);
+    }
+  }
 
-      {EDGES.map((_, i) => (
-        <group key={`pulse-${i}`}>
-          <mesh ref={(el) => { halosRef.current[i] = el; }}>
-            <sphereGeometry args={[0.09, 8, 8]} />
-            <meshBasicMaterial
-              color="#ffe9b8"
-              transparent
-              opacity={0.25}
-              depthWrite={false}
-              toneMapped={false}
-            />
-          </mesh>
-          <mesh ref={(el) => { dotsRef.current[i] = el; }}>
-            <sphereGeometry args={[0.035, 8, 8]} />
-            <meshBasicMaterial color="#fff3d6" toneMapped={false} />
-          </mesh>
-        </group>
-      ))}
+  const linePositions = new Float32Array(edges.length * 2 * 3);
+  edges.forEach(([a, b], i) => {
+    const va = nodes[a];
+    const vb = nodes[b];
+    linePositions[i * 6] = va.x;
+    linePositions[i * 6 + 1] = va.y;
+    linePositions[i * 6 + 2] = va.z;
+    linePositions[i * 6 + 3] = vb.x;
+    linePositions[i * 6 + 4] = vb.y;
+    linePositions[i * 6 + 5] = vb.z;
+  });
 
-      {NODES.map((p, i) => (
-        <mesh key={`node-${i}`} position={p}>
-          <sphereGeometry args={[0.05, 8, 8]} />
-          <meshBasicMaterial color="#f6d9a0" transparent opacity={0.6} toneMapped={false} />
-        </mesh>
-      ))}
-    </group>
-  );
+  // Pulses traveling along a subset of edges
+  const routes: Route[] = [];
+  for (let i = 0; i < PULSE_COUNT; i++) {
+    const edge = edges[Math.floor(Math.random() * edges.length)];
+    routes.push({
+      a: edge[0],
+      b: edge[1],
+      phase: Math.random() * 2,
+      speed: 0.25 + Math.random() * 0.35,
+    });
+  }
+  const pulsePositions = new Float32Array(PULSE_COUNT * 3);
+
+  const nodeGeometry = new THREE.BufferGeometry();
+  nodeGeometry.setAttribute("position", new THREE.BufferAttribute(nodePositions, 3));
+  nodeGeometry.setAttribute("color", new THREE.BufferAttribute(nodeColors, 3));
+
+  const lineGeometry = new THREE.BufferGeometry();
+  lineGeometry.setAttribute("position", new THREE.BufferAttribute(linePositions, 3));
+
+  const pulseGeometry = new THREE.BufferGeometry();
+  pulseGeometry.setAttribute("position", new THREE.BufferAttribute(pulsePositions, 3));
+
+  return { nodes, nodeGeometry, lineGeometry, pulseGeometry, pulsePositions, routes };
 }
 
-function BrainCore({ progress }: { progress: MotionValue<number> }) {
+function NeuralNetwork({ progress }: { progress: MotionValue<number> }) {
   const group = useRef<THREE.Group>(null);
-  const aura = useRef<THREE.Mesh>(null);
-  const glowMaterial = useRef<THREE.MeshBasicMaterial>(null);
+  const coreRef = useRef<THREE.Sprite>(null);
+  const coreMatRef = useRef<THREE.SpriteMaterial>(null);
   const { pointer } = useThree();
 
-  const { geometry, glowGeometry } = useMemo(() => buildBrainGeometry(), []);
+  // Refs are the sanctioned mutable containers — required because the
+  // network buffers and materials are mutated every frame in useFrame.
+  const discRef = useRef<THREE.CanvasTexture | null>(null);
+  if (discRef.current === null) discRef.current = makeDiscTexture();
+  const disc = discRef.current;
+
+  const networkRef = useRef<ReturnType<typeof buildNetwork> | null>(null);
+  if (networkRef.current === null) networkRef.current = buildNetwork();
+  const network = networkRef.current;
 
   useEffect(() => {
     return () => {
-      geometry.dispose();
-      glowGeometry.dispose();
+      disc.dispose();
+      network.nodeGeometry.dispose();
+      network.lineGeometry.dispose();
+      network.pulseGeometry.dispose();
     };
-  }, [geometry, glowGeometry]);
+  }, [disc, network]);
 
   useFrame((state, delta) => {
     const p = progress.get();
     const t = state.clock.elapsedTime;
 
     if (group.current) {
-      group.current.rotation.y += delta * 0.1 + pointer.x * delta * 0.4;
+      group.current.rotation.y += delta * 0.075 + pointer.x * delta * 0.3;
       group.current.rotation.x = THREE.MathUtils.lerp(
         group.current.rotation.x,
-        pointer.y * 0.18 - p * 0.3 + 0.12,
-        0.06
+        pointer.y * 0.16 - p * 0.3 + 0.05,
+        0.05
       );
-      group.current.position.y = Math.sin(t * 0.5) * 0.08 - p * 0.65;
-      group.current.scale.setScalar(1 + p * 0.14 + Math.sin(t * 0.6) * 0.008);
+      group.current.position.y = Math.sin(t * 0.4) * 0.06 - p * 0.6;
+      group.current.scale.setScalar(1 + p * 0.14 + Math.sin(t * 0.5) * 0.012);
     }
 
-    if (aura.current) {
-      aura.current.rotation.y -= delta * 0.06;
-      aura.current.rotation.z += delta * 0.015;
+    for (let i = 0; i < network.routes.length; i++) {
+      const r = network.routes[i];
+      const raw = (t * r.speed + r.phase) % 2;
+      const tt = raw > 1 ? 2 - raw : raw;
+      const a = network.nodes[r.a];
+      const b = network.nodes[r.b];
+      network.pulsePositions[i * 3] = a.x + (b.x - a.x) * tt;
+      network.pulsePositions[i * 3 + 1] = a.y + (b.y - a.y) * tt;
+      network.pulsePositions[i * 3 + 2] = a.z + (b.z - a.z) * tt;
     }
+    network.pulseGeometry.attributes.position.needsUpdate = true;
 
-    if (glowMaterial.current) {
-      glowMaterial.current.opacity = 0.5 + Math.sin(t * 1.3) * 0.22;
+    if (coreRef.current && coreMatRef.current) {
+      coreRef.current.scale.setScalar(2.4 + Math.sin(t * 1.1) * 0.2);
+      coreMatRef.current.opacity = 0.42 + Math.sin(t * 1.1) * 0.12;
     }
   });
 
   return (
     <group ref={group}>
-      <Float speed={1.2} rotationIntensity={0.15} floatIntensity={0.35}>
-        <mesh geometry={geometry}>
-          <meshPhysicalMaterial
-            vertexColors
-            roughness={0.42}
-            metalness={0.28}
-            clearcoat={0.45}
-            clearcoatRoughness={0.3}
-            sheen={0.5}
-            sheenColor="#d6ad60"
-            emissive="#0b2147"
-            emissiveIntensity={0.18}
-          />
-        </mesh>
+      <sprite ref={coreRef} scale={2.4}>
+        <spriteMaterial
+          ref={coreMatRef}
+          map={disc}
+          color="#e8c27a"
+          transparent
+          opacity={0.5}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </sprite>
 
-        <mesh geometry={glowGeometry} scale={1.006}>
-          <meshBasicMaterial
-            ref={glowMaterial}
-            vertexColors
-            transparent
-            opacity={0.55}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-      </Float>
+      <lineSegments geometry={network.lineGeometry}>
+        <lineBasicMaterial
+          color="#d6ad60"
+          transparent
+          opacity={0.16}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </lineSegments>
 
-      <mesh ref={aura} scale={1.72}>
-        <icosahedronGeometry args={[1, 1]} />
-        <meshBasicMaterial color="#4fa3e3" wireframe transparent opacity={0.12} />
-      </mesh>
+      <points geometry={network.nodeGeometry}>
+        <pointsMaterial
+          map={disc}
+          size={0.085}
+          vertexColors
+          transparent
+          depthWrite={false}
+          sizeAttenuation
+          blending={THREE.AdditiveBlending}
+        />
+      </points>
 
-      <SynapseNetwork />
+      <points geometry={network.pulseGeometry}>
+        <pointsMaterial
+          map={disc}
+          size={0.2}
+          color="#fff1d2"
+          transparent
+          depthWrite={false}
+          sizeAttenuation
+          blending={THREE.AdditiveBlending}
+        />
+      </points>
 
-      <Sparkles count={120} scale={4} size={2} speed={0.3} color="#f1ddae" />
-      <Sparkles count={60} scale={3} size={1.3} speed={0.45} color="#a9d6f5" />
+      <Sparkles count={90} scale={4.4} size={2} speed={0.25} color="#f1ddae" />
+      <Sparkles count={50} scale={3.4} size={1.3} speed={0.4} color="#a9d6f5" />
     </group>
-  );
-}
-
-function Lights() {
-  return (
-    <>
-      <ambientLight intensity={0.55} />
-      <pointLight position={[3, 2, 4]} intensity={28} color="#d6ad60" />
-      <pointLight position={[-4, -2, -3]} intensity={22} color="#4fa3e3" />
-      <directionalLight position={[0, 4, 3]} intensity={1.1} color="#f8f6f0" />
-    </>
   );
 }
 
@@ -257,8 +251,8 @@ export function Brain3D({ progress }: { progress: MotionValue<number> }) {
       gl={{ alpha: true, antialias: true }}
     >
       <Suspense fallback={null}>
-        <Lights />
-        <BrainCore progress={progress} />
+        <ambientLight intensity={0.6} />
+        <NeuralNetwork progress={progress} />
       </Suspense>
     </Canvas>
   );
